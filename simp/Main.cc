@@ -23,6 +23,7 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #include <signal.h>
 #include <zlib.h>
 #include <sys/resource.h>
+#include <string>
 
 #include "utils/System.h"
 #include "utils/ParseUtils.h"
@@ -71,7 +72,7 @@ static void SIGINT_exit(int signum) {
 int main(int argc, char** argv)
 {
     try {
-        setUsageHelp("USAGE: %s [options] <input-file> <result-output-file>\n\n  where input may be either in plain or gzipped DIMACS.\n");
+        setUsageHelp("USAGE: %s [options] <input-file> <temporary working directory>\n\n  where input may be either in plain or gzipped DIMACS.\n");
         // printf("This is MiniSat 2.0 beta\n");
         
 #if defined(__linux__)
@@ -135,7 +136,7 @@ int main(int argc, char** argv)
             printf("============================[ Problem Statistics ]=============================\n");
             printf("|                                                                             |\n"); }
         
-        S.output = (argc >= 3) ? fopen(argv[2], "wb") : NULL;
+        S.output = (argc >= 3) ? fopen((std::string(argv[2]) + "/res").c_str(), "wb") : NULL;
         parse_DIMACS(in, S);
         gzclose(in);
 
@@ -166,7 +167,8 @@ int main(int argc, char** argv)
                 printf("Solved by simplification\n");
                 printStats(S);
                 printf("\n"); }
-            printf("UNSATISFIABLE\n");
+            printf("s UNSATISFIABLE\n");
+            printf("0\n"); // solution is simply the empty clause
             exit(20);
         }
 
@@ -185,21 +187,32 @@ int main(int argc, char** argv)
         if (S.verbosity > 0){
             printStats(S);
             printf("\n"); }
-        printf(ret == l_True ? "SATISFIABLE\n" : ret == l_False ? "UNSATISFIABLE\n" : "INDETERMINATE\n");
+        printf(ret == l_True ? "s SATISFIABLE\n" : ret == l_False ? "s UNSATISFIABLE\n" : "s INDETERMINATE\n");
         if (S.output != NULL){
             if (ret == l_True){
-                fclose(S.output);                 // Close the proof file
-                S.output = fopen(argv[2], "wb");  // Clear it to put in the solution
+                // Write SAT solution directly to stdout
+                fprintf(stdout, "v ");
                 for (int i = 0; i < S.nVars(); i++)
                     if (S.model[i] != l_Undef)
-                        fprintf(S.output, "%s%s%d", (i==0)?"":" ", (S.model[i]==l_True)?"":"-", i+1);
-                fprintf(S.output, " 0\n");
-            }else if (ret == l_False)
-                fprintf(S.output, "0\n");
+                        fprintf(stdout, "%s%s%d", (i==0)?"":" ", (S.model[i]==l_True)?"":"-", i+1);
+                fprintf(stdout, " 0\n");
+            } else if (ret == l_False) {
+                // UNSAT proof was written to S.output during the solving process, now print to stdout
+                fclose(S.output);
+                S.output = fopen((std::string(argv[2]) + "/res").c_str(), "r");
+                char buf[2048];
+                int nread = 0;
+                while ((nread = fread(buf, 1, 2048, S.output)) > 0) {
+                    fwrite(buf, 1, nread, stdout);
+                }
+                printf("0\n");
+            }
             else
-                fprintf(S.output, "INDET\n");
+                fprintf(stdout, "s INDETERMINATE\n");
             fclose(S.output);
         }
+        
+        
 
 #ifdef NDEBUG
         exit(ret == l_True ? 10 : ret == l_False ? 20 : 0);     // (faster than "return", which will invoke the destructor for 'Solver')
@@ -208,7 +221,7 @@ int main(int argc, char** argv)
 #endif
     } catch (OutOfMemoryException&){
         printf("===============================================================================\n");
-        printf("INDETERMINATE\n");
+        printf("s INDETERMINATE\n");
         exit(0);
     }
 }
